@@ -1,0 +1,405 @@
+---
+title: "Take Home Exam Part I"
+output:
+  word_document: default
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Take Home Exam Part 1
+
+Files are imported to R and format of the column which includes id number of tweets are converted the numeric format. Created_at column includes time and date information together. Thus, Time and Date columns are added to dataframe(created_at is split into 2 columns).
+Smaller dataframes(tweet_tibble, user_tibble, hashtag_tibble) are created and they are used for sql queries to answer exam questions.
+
+```{r cars}
+
+library(readxl)
+library(dplyr)
+
+h <-  read_excel("C:/Users/kilic/Desktop/tags.xlsx")
+View(h)
+
+t <- read_excel("C:/Users/kilic/Desktop/days.xlsx")
+View(t)
+
+t$id <- as.numeric(t$id)
+h$id <- as.numeric(h$id)
+
+t$id <- format(t$id, scientific=F)
+h$id <- format(h$id, scientific=F)
+
+t$Time <- format(as.POSIXct(t$created_at,format="%Y:%m:%d %H:%M:%S"),"%H:%M:%S")
+t$Date <- format(as.POSIXct(t$created_at,format="%Y:%m:%d %H:%M:%S"),"%Y-%m-%d")
+
+
+tweet_tibble <- t %>%
+  select(id, user_screen_name,favourite_count, retweet_count, urls, media, text, Date, Time)
+
+user_tibble_d <- t %>%
+  select(user_screen_name, user_followers_count, user_location)
+
+user_tibble <- unique(user_tibble_d)
+
+hashtag_tibble <- h 
+
+View(tweet_tibble)
+View(hashtag_tibble)
+View(user_tibble)
+```
+
+R is connected to RSQlite
+
+
+```{r}
+
+#R is connected to SQL
+
+library(RSQLite)
+
+db <- dbConnect(SQLite(), dbname="Table80.sqlite")
+
+```
+
+Empty RSQLite databases are created, Keys and type of variables are defined.
+
+```{r}
+
+#User Tables are created 
+dbSendQuery(conn = db,  "CREATE TABLE UserTable (
+            user_screen_name TEXT PRIMARY KEY,
+            user_followers_count INT,
+            user_location TEXT)" )
+
+#Tweet Tables are created 
+
+dbSendQuery(conn = db,  "CREATE TABLE TweetTable (
+            id INT PRIMARY KEY,
+            user_screen_name TEXT,
+            favourite_count INT,
+            retweet_count INT, 
+            urls TEXT,
+            media TEXT,
+            text TEXT,
+            Date DATE,
+            Time TIME,
+            FOREIGN KEY (user_screen_name) REFERENCES UserTable (user_screen_name) ) ")
+
+
+#Hashtag Table is created
+
+dbSendQuery(conn = db,  "CREATE TABLE HashtagTable (
+            hashtag_id INT PRIMARY KEY,
+            id INT,
+            hashtags TEXT,
+            FOREIGN KEY(id) REFERENCES TWeetTable (id) ) ")
+
+
+
+```
+
+Data Frames are inserted into sql databases
+
+```{r}
+dbWriteTable(conn = db, name = "TweetTable", value = tweet_tibble, overwrite=TRUE)
+dbWriteTable(conn = db, name = "UserTable", value = user_tibble, overwrite=TRUE)
+dbWriteTable(conn = db, name = "HashtagTable", value = hashtag_tibble,overwrite=TRUE)
+
+```
+
+
+## Write SQL statements to do the following on  project database:
+
+
+### 1)Select columns
+
+user_location column is selected and only fiels which are not empty are returned (I limit results to 5 for visual purposes in report)
+```{r}
+
+dbGetQuery(db, "SELECT UserTable.user_location
+           FROM UserTable 
+           WHERE UserTable.user_location IS NOT NULL
+           LIMIT 5")
+
+```
+
+user_screen_name and user_followers_count columns are selected (I limit results to 5)
+
+```{r}
+dbGetQuery(db, "SELECT UserTable.user_screen_name, UserTable.user_followers_count 
+           FROM UserTable
+           LIMIT 5")
+```
+
+### 2) Filter rows
+
+Find user names of tweets which get more than 4000 retweets.
+
+```{r}
+
+dbGetQuery(db, "SELECT TweetTable.user_screen_name
+           FROM TweetTable
+           WHERE TweetTable.retweet_count > 4000 ")
+
+```
+
+### 3) Sort your query 
+Return fist five user names who get maximum number retweets (desc sorts tr counts in decresing order, If it is not used, reults appear in increasing rt_count order)
+
+```{r}
+
+dbGetQuery(db, "SELECT UserTable.user_screen_name, TweetTable.retweet_count
+           FROM UserTable
+           INNER JOIN TweetTable ON TweetTable.user_screen_name == UserTable.user_screen_name
+           ORDER BY TweetTable.retweet_count desc
+           LIMIT 5")
+
+```
+
+### 4) Group by an  an attribute
+### 5) Calculate an aggregate function on an attribute of the group.
+
+Number of hashtags used on 2018-04-12 is found by using group by and count function
+
+```{r}
+
+dbGetQuery(db, "SELECT  HashtagTable.hashtags, COUNT((hashtags))
+           FROM HashtagTable INNER JOIN TweetTable ON HashtagTable.id == TweetTable.id
+           WHERE TWeetTable.Date =='2018-04-12'
+           GROUP BY HashtagTable.hashtags
+           ORDER BY COUNT(hashtags) desc
+           LIMIT 10 ")
+
+```
+### 6) Use DISTINCT keyword will make it so it only returns one instance of each attribute.
+
+First 5 distinct hashtags are returned. Lower keyword prevents query to return same hashtags with different upper_lower case format. 
+
+
+```{r}
+
+dbGetQuery(db, "SELECT DISTINCT (LOWER (HashtagTable.hashtags))
+           FROM HashtagTable
+           LIMIT 5")
+
+```
+
+### 7) Create a column that is calculated from other columns.
+
+Average number of rt's on each day is calculated using Date and retweet_count columns. Reults are assignmed to new column AverageRT
+
+```{r}
+
+dbGetQuery(db, "SELECT  TweetTable.Date,  AVG(TweetTable.retweet_count) as AverageRT
+           FROM TweetTable INNER JOIN UserTable ON TweetTable.user_screen_name == TweetTable.user_screen_name
+           GROUP BY TweetTable.Date
+           ORDER BY TweetTable.Date")
+```
+
+### 8) Count all of the null values in a nullable field.
+
+To find number of null values in user_location column, following code is applied:
+```{r}
+
+dbGetQuery(db, "SELECT COUNT(1) FROM UserTable WHERE UserTable.user_location IS NULL ")
+
+```
+
+To find number of null values in urls column, following code is applied:
+```{r}
+
+dbGetQuery(db, "SELECT COUNT(1) FROM TweetTable WHERE TweetTable.urls IS NULL ")
+```
+
+To find number of null values in media column, following code is applied:
+```{r}
+dbGetQuery(db, "SELECT COUNT(1) FROM TweetTable WHERE TweetTable.media IS NULL ")
+```
+
+### 9)In a text field count all of rows in the columns that contain the letter 'a'. 
+
+
+
+### 10) Subselect columns using a subquery.  
+
+Return users' names  whose tweets get more retweets than corresponding tweet with given id number. Tetweet_count is also returned.
+
+```{r}
+dbGetQuery(db, "SELECT a.user_screen_name,  b.retweet_count
+                FROM UserTable a, TweetTable b
+                WHERE a.user_screen_name = b.user_screen_name AND b.retweet_count >
+               (SELECT retweet_count
+               FROM TweetTable
+               WHERE id =  '984571987342245888') ")
+```
+
+### 11) Computationally what is the most expensive operation in the relational data model?  
+
+SQL works well for set-based work but procedural operations appear to be expensive such as using loops, etc.
+
+### 12) Write a function to calculate something relevant to your project.  Show that it works.
+
+
+```{r}
+
+# dbGetQuery(db," CREATE FUNCTION AverageRT ()
+#   RETURNS FLOAT
+#   AS
+#     BEGIN 
+#        RETURN (SELECT  AVG([retweet]) FROM [TweetTable])
+#     END")"
+# 
+# #dbGetQuery(db,"
+# #SELECT AverageRT (UserTable.retweet_count) AS avg
+# #               FROM UserTable")
+```
+
+### 13) When two tables are joined in a relational database what is the resulting data structure?
+
+The result is a combination of the two tables such that rows have been joined by their common fields. Since tables are combined with respect to their matched attribute this common field does not dublicate but new fields/columns come together. There are different type of joins:
+
+INNER JOIN: It Returns all of the records from Table 1 and Table 2 when there is matching values in both tables
+LEFT JOIN: It returns all of the records from Table 1(Left Table), and the records from Table 2(Right Table) for which the matching condition is satisified.
+RIGHT JOIN:It returns all of the records from Table 2(Right Table), and the records from Table 1(Left Table) for which the matching condition is satisified.
+FULL JOIN: It returns all of the records whether there is a match between two tables or not. 
+
+### 14) Select and filter some data from a table created by a join.
+
+User Table and Tweet Table are joined by their common field user_screen_name.
+user_screen_name and user_location of users whose tweets get more than 100 favs are selected.
+
+Filter is fav number >100
+
+```{r}
+
+dbGetQuery(db, "SELECT TweetTable.user_screen_name, UserTable.user_location
+           FROM TweetTable INNER JOIN UserTable ON TweetTable.user_screen_name == UserTable.user_screen_name
+           WHERE TweetTable.favourite_count > 100")
+```
+
+### 15) Why not put all the data in one big table and avoid all of these joins?
+
+Relational Database enables us to deal with data in terms of relations of attributes which makes queries easier and more understandable. However; in order to use SQL tables without facing any issues, they should be in 1NF, 2NF or 3NF. Most of the time, data in one big table does not satisfies those forms and cause problems in some queries. Therefore, separating data into different tables would be the solution. In addition, collecting more related attributes together in different tables is useful for practical issues.
+
+### 16) Why create views?
+
+View is a virtual table which is based on the result-set of an SQL statement and has rows/columns like real table. View demonstrates structure data in natural or intuitive way. It leads user to notice what should be modified exactly thanks to its access restriction to data in way. In addition, fields of Views can be combined from various tables and this structure helps user to summarize data from many tables.
+
+
+### 17) Select and filter some data from a table created by a view.
+
+```{r}
+
+dbGetQuery(db, "CREATE VIEW VTable AS
+SELECT user_screen_name, user_location
+FROM UserTable
+WHERE user_followers_count > 120000 ")
+
+dbGetQuery(db, "SELECT * FROM VTable")
+```
+
+
+### 18) Why create temporary tables?
+
+Temporary Tables allows us to store and process intermediate results by using similar operations in regular SQL Server Tables such as select, join, update, etc. They are useful when great amount of is stored in a table but small subset of those records is required to work on. In such cases instead of filtering the data perpetually, data can be filtered once and stored in a temporary table. Temporary tables are deleted when current client session terminates which prevents extra load on computer. Thus, it is useful to create temporary tables in many cases.
+
+### 19) Select and filter some data from a table created by a temporary table.
+
+
+### 20) Insert some data in to a table.
+```{r}
+
+t <- read_excel("C:/Users/kilic/Desktop/days.xlsx")
+
+t$id <- as.numeric(t$id)
+h$id <- as.numeric(h$id)
+
+t$id <- format(t$id, scientific=F)
+h$id <- format(h$id, scientific=F)
+
+t$Time <- format(as.POSIXct(t$created_at,format="%Y:%m:%d %H:%M:%S"),"%H:%M:%S")
+t$Date <- format(as.POSIXct(t$created_at,format="%Y:%m:%d %H:%M:%S"),"%Y-%m-%d")
+
+
+user_tibble_d <- t %>%
+  select(user_screen_name, user_followers_count, user_location)
+
+user_tibble <- unique(user_tibble_d)
+
+
+u1 <- user_tibble 
+
+#User Table1 is created 
+
+dbSendQuery(conn = db,  "CREATE TABLE UserTable2 (
+            user_screen_name TEXT PRIMARY KEY,
+            user_followers_count INT,
+            user_location TEXT)" )
+
+
+```
+
+```{r}
+dbSendQuery(conn = db, "INSERT INTO UserTable2 (user_screen_name, user_followers_count, user_location)
+                        VALUES ('ekilic', '74', 'Boston, MA')" )
+```
+### 21) Update some data in a table.
+
+Location of user Rey_Paaaa is updated as Paris
+```{r}
+dbSendQuery(conn = db,"UPDATE UserTable2
+SET user_location = 'Paris'
+WHERE user_screen_name =='Rey_Paaaa' ")
+
+```
+
+### 22) Delete some data a table.
+
+Rows including information about users located in 'Alabama, USA' is deleted with the following code:
+
+```{r}
+
+dbSendQuery(conn = db,"DELETE FROM UserTable2
+WHERE user_location ='Alabama, USA' ")
+
+```
+
+
+Views can be considered as virtual tables. Generally speaking, a table has a set of definition, and it physically stores the data. A view also has a set of definitions, which is build on top of table(s) or other view(s), and it does not physically store the data.
+
+
+### 28) Explain to an eight year old (i.e. your professor) what are the first  three Normal Forms.
+
+There are 3 type of normal forms:
+
+1)1st Normal Form
+2)2nd Normal Form
+1)3rd Normal Form
+
+1NF
+
+In first normal form, domain of each attribute includes only atomic values and single values from the domain represent those attributes.In another way to say, each field/cell of table contains single value.
+
+Each table has primary key (minimal set if attributes defining unique records). Primary keys uniquely identifies rows/records of the table.
+Columns store different information in the same table. There are not any repeating columns or rows.
+1NF leads reduction in data reduncies and can be derived by sing primary keys, avoiding dublicate fiels, repeating groups.
+
+2NF
+
+First of all, rules of 1NF should be satisfied to be in 2NF. In addition, there should not be any partial dependencies of the columns on the primary key. In some tables more than one attribute can uniquely define the records. In those type of cases, key consists of more than one columns and is called as 'composite key'. In order to be in 2NF, all non-key attributes should depend on all of the components of the composite key. If they partially depend, table can be broken into 2 or more tables for avoiding violation of 2NF. Furthermore, redundant data across multiple rows should be stored in a separate table.
+
+3NF
+
+Tables in 2NF cause some problems if there are some modification anomalies. For instance; if one attribute depends on second attribute while it depends on third attribute, there is transitive dependency in the system. Deleting fields result in data loss in such systems. 3NH plays significant role in these situations. To be in 3NF, all rules of 2NF should be satisfied. Fields which do not depend on primary key should be eliminated. If transitive dependency is observed, table should be separated into multiple tables to avoid violating 3NF.
+
+
+
+
+
+
+
+
+
